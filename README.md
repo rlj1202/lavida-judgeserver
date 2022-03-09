@@ -7,10 +7,10 @@ Lavida judge server
 #### Request
 ```json
 {
-    submission_id: 0,
-    problem_id: 0,
-    sourceCode: "#include <cstdio>...",
-    language: "c++"
+    "submission_id": 0,
+    "problem_id": 0,
+    "sourceCode": "#include <cstdio>...",
+    "language": "c++"
 }
 ```
 
