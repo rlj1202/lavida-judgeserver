@@ -1,25 +1,26 @@
 import child_process from 'child_process'
 import util from 'util'
 import fs from 'fs'
-import path, { parse } from 'path'
+import path from 'path'
 
 import Koa from 'koa'
 import Router from 'koa-router'
 import bodyParser from 'koa-bodyparser'
 import logger from 'koa-logger'
 
+import Config from './config'
+
 const app = new Koa()
 const router = new Router()
-const port = 3080
-
-const PROBLEMS_DIR = './problems'
-const TEMP_DIR = '/tmp'
 
 interface JudgeRequestBody {
-    submissionId?: string
     problemId?: string
     sourceCode?: string
     language?: string
+    /** in seconds */
+    timeLimit?: string
+    /** in bytes */
+    memoryLimit?: string
 }
 
 async function lavidajudger(options: {
@@ -71,55 +72,74 @@ async function lavidajudger(options: {
 router.post('/judge', async (ctx, next) => {
     const data = ctx.request.body as JudgeRequestBody
 
-    if (!data.problemId) {
-        ctx.body = { error: 'Problem id is not provided' }
-        ctx.status = 400
-        return
-    }
+    try {
+        if (!data.problemId) {
+            throw new Error('Problem id is not provided')
+        }
+        if (!data.sourceCode) {
+            throw new Error('No source code')
+        }
+        if (!data.timeLimit) {
+            throw new Error('No time limit')
+        }
+        if (!data.memoryLimit) {
+            throw new Error('No memory limit')
+        }
+        if (!data.language) {
+            throw new Error('No language provided')
+        }
+ 
+        const problemDir = path.join(Config.problemsDir, data.problemId)
+ 
+        if (!fs.existsSync(problemDir)) {
+            throw new Error('Problem doesnt exist')
+        }
+ 
+        // Compile source code
+        var extension: string
+        var compileCMD: (compiledPath: string, sourcecodePath: string) => string
 
-    const problemDir = path.join(PROBLEMS_DIR, data.problemId)
+        if (data.language == 'cpp') {
+            extension = '.cpp'
+            compileCMD = (compiledPath: string, sourcecodePath: string) =>
+                `g++ -o ${compiledPath} ${sourcecodePath}`
+        } else {
+            throw new Error(`Not supported language: ${data.language}`)
+        }
 
-    if (!fs.existsSync(problemDir)) {
-        ctx.body = { error: 'Problem doesnt exist' }
-        ctx.status = 400
-        return
-    }
+        const sourcecodePath = path.join(Config.tempDir, `source${extension}`)
+        const compiledPath = path.join(Config.tempDir, 'exec')
+ 
+        fs.writeFileSync(sourcecodePath, data.sourceCode, { encoding: 'utf8' })
+        await util.promisify(child_process.exec)(compileCMD(compiledPath, sourcecodePath))
+ 
+        // Test per test cases
+        const cpuLimit = parseInt(data.timeLimit)
+        const realLimit = parseInt(data.timeLimit)
+        const memLimit = parseInt(data.memoryLimit)
 
-    if (!data.sourceCode) {
-        ctx.body = { error: 'No source code' }
-        ctx.status = 400
-        return
-    }
-
-    // Compile source code
-    // TODO: multiple langs
-    const sourcecodePath = path.join(TEMP_DIR, 'source.cpp')
-    const compiledPath = path.join(TEMP_DIR, 'exec')
-
-    fs.writeFileSync(sourcecodePath, data.sourceCode, { encoding: 'utf8' })
-    await util.promisify(child_process.exec)(`g++ -o ${compiledPath} ${sourcecodePath}`)
-
-    // Test per test cases
-    const cpuLimit = 1
-    const realLimit = 1
-    const memLimit = 256*1024*1024
-
-    const files = fs.readdirSync(problemDir)
-    const results = await Promise.all(
-        files.filter((file) => {
-            return /^.+\.in$/.test(file);
-        }).map((file) => {
-            const testcaseId = file.slice(0, -3)
-            const outputFile = `${testcaseId}.out`
-    
-            return {
-                inputFile: file,
-                outputFile,
-            }
-        }).map(async ({ inputFile, outputFile }) => {
-            try {
+        if (isNaN(cpuLimit)) {
+            throw new Error('Failed to parse time limit')
+        }
+        if (isNaN(memLimit)) {
+            throw new Error('Failed to parse memory limit')
+        }
+ 
+        const files = fs.readdirSync(problemDir)
+        const results = await Promise.all(
+            files.filter((file) => {
+                return /^.+\.in$/.test(file);
+            }).map((file) => {
+                const testcaseId = file.slice(0, -3)
+                const outputFile = `${testcaseId}.out`
+        
+                return {
+                    inputFile: file,
+                    outputFile,
+                }
+            }).map(async ({ inputFile, outputFile }) => {
                 const result = await lavidajudger({
-                    execPath: '/tmp/exec',
+                    execPath: compiledPath,
                     inputPath: path.join(problemDir, inputFile),
                     outputPath: path.join(problemDir, outputFile),
                     cpuLimit,
@@ -127,15 +147,16 @@ router.post('/judge', async (ctx, next) => {
                     memLimit,
                 })
                 return result
-            } catch (error) {
-                return {
-                    error
-                }
-            }
-        })
-    )
-
-    ctx.body = results
+            })
+        )
+ 
+        ctx.body = results
+    } catch (e) {
+        ctx.body = {
+            error: e
+        }
+        ctx.status = 400
+    }
 })
 
 // Middlewares
@@ -146,6 +167,6 @@ app.use(logger())
 app.use(router.routes())
 app.use(router.allowedMethods())
 
-app.listen(port, () => {
-    console.log(`> judge server listening port at ${port}`)
+app.listen(Config.port, () => {
+    console.log(`> judge server listening port at ${Config.port}`)
 })

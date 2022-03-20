@@ -7,10 +7,11 @@ Lavida judge server
 #### Request
 ```json
 {
-    "submission_id": 0,
-    "problem_id": 0,
+    "problemId": 1000,
     "sourceCode": "#include <cstdio>...",
-    "language": "c++"
+    "language": "cpp",
+    "timeLimit": 1,
+    "memoryLimit": 268435456,
 }
 ```
 
